@@ -1,0 +1,5 @@
+{
+  "name": "Trình tạo đề kiểm tra Tiếng Anh Global Success",
+  "description": "Một ứng dụng web giúp giáo viên tạo nhanh các bài kiểm tra trắc nghiệm tiếng Anh bám sát chương trình sách giáo khoa Global Success (lớp 6-9) của NXB Giáo dục Việt Nam, sử dụng Gemini API.",
+  "requestFramePermissions": []
+}
