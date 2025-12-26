@@ -262,8 +262,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 />
               </label>
             </div>
-             <p className="mt-2 text-xs text-slate-500 italic">
-                AI sẽ phân tích cấu trúc của file đề để tạo ra đề mới tương ứng.
+             <p className="mt-2 text-xs text-slate-500 italic text-center">
+                AI sẽ tự động phân tích định dạng và số lượng câu hỏi từ file của bạn.
              </p>
           </div>
         )}

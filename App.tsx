@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 import { TEXTBOOK_DATA } from './constants';
 import { Grade, QuizData, SavedQuiz, QuestionType, GenerationMode } from './types';
@@ -67,7 +68,7 @@ const App: React.FC = () => {
     } else {
         // Upload mode
         if (!sampleFile) {
-            setError("Vui lòng tải lên file ảnh đề mẫu.");
+            setError("Vui lòng tải lên file đề mẫu.");
             setIsLoading(false);
             return;
         }
@@ -93,9 +94,10 @@ const App: React.FC = () => {
         unitName: contextUnitName,
       };
       localStorage.setItem('savedQuiz', JSON.stringify(dataToSave));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Đã có lỗi xảy ra khi tạo đề. Vui lòng thử lại. Lỗi có thể do ảnh không rõ ràng hoặc hệ thống quá tải.");
+      // Hiển thị lỗi chi tiết thay vì thông báo chung chung
+      setError(err.message || "Đã có lỗi xảy ra. Vui lòng thử lại sau.");
     } finally {
       setIsLoading(false);
     }
@@ -148,9 +150,15 @@ const App: React.FC = () => {
           <div className="lg:col-span-7 mt-10 lg:mt-0">
             {isLoading && <Loader />}
             {error && (
-              <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg" role="alert">
-                <p className="font-bold">Đã xảy ra lỗi</p>
-                <p>{error}</p>
+              <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg mb-6 shadow-sm" role="alert">
+                <p className="font-bold flex items-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  Đã xảy ra lỗi
+                </p>
+                <p className="mt-1 text-sm">{error}</p>
+                <p className="mt-2 text-xs opacity-70 italic font-medium">Lưu ý: Nếu bạn đang chạy trên Vercel, hãy đảm bảo đã cấu hình API_KEY trong Environment Variables.</p>
               </div>
             )}
             {quizData && !isLoading && (

@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { QuizData, QuestionType } from '../types';
 import mammoth from 'mammoth';
@@ -17,7 +18,11 @@ const fileToGenerativePart = async (file: File): Promise<{ inlineData: { data: s
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
-      const base64String = (reader.result as string).split(',')[1];
+      if (typeof reader.result !== 'string') {
+        reject(new Error("Không thể đọc tệp tin."));
+        return;
+      }
+      const base64String = reader.result.split(',')[1];
       resolve({
         inlineData: {
           data: base64String,
@@ -38,7 +43,7 @@ const extractTextFromDocx = async (file: File): Promise<string> => {
       try {
         const arrayBuffer = event.target?.result as ArrayBuffer;
         if (!arrayBuffer) {
-           reject("Could not read file");
+           reject(new Error("Không thể đọc nội dung file Word."));
            return;
         }
         const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
@@ -47,7 +52,7 @@ const extractTextFromDocx = async (file: File): Promise<string> => {
         reject(error);
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error("Lỗi khi đọc file Word."));
     reader.readAsArrayBuffer(file);
   });
 };
@@ -61,7 +66,12 @@ export async function generateQuiz({
   questionType,
   sampleFile,
 }: GenerateQuizParams): Promise<QuizData> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") {
+    throw new Error("API Key chưa được thiết lập. Vui lòng kiểm tra lại cấu hình Environment Variables trên Vercel.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   
   let contentScopeInstruction = "";
   let userPrompt = "";
@@ -70,34 +80,33 @@ export async function generateQuiz({
   let questionTypeInstruction = "";
 
   if (sampleFile) {
-    // UPLOAD MODE: Bỏ qua các tham số numQuestions, numOptions và questionType của UI
+    // UPLOAD MODE: AI tự động phân tích cấu trúc
     contentScopeInstruction = `2. **Nguồn nội dung (Phân tích tài liệu)**: 
-    - Phân tích nội dung file đính kèm (ảnh, PDF hoặc text từ Word).
-    - Xác định trình độ (CEFR), cấu trúc ngữ pháp, từ vựng và độ khó.
-    - **Nhiệm vụ**: Tạo một đề thi MỚI có độ khó và cấu trúc TƯƠNG ĐƯƠNG với mẫu.
-    - **Cấu trúc**: Tự xác định số lượng câu hỏi và loại câu hỏi (Trắc nghiệm hoặc Điền từ) dựa trên mẫu. 
-    - Không copy nguyên văn câu hỏi từ mẫu. Tạo các câu hỏi GỐC kiểm tra cùng kiến thức.`;
+    - Phân tích nội dung file đính kèm để xác định trình độ, cấu trúc ngữ pháp và từ vựng.
+    - **Nhiệm vụ**: Tạo một đề thi MỚI hoàn toàn nhưng có cấu trúc và phong cách TƯƠNG ĐƯƠNG với mẫu.
+    - **Tự động hóa**: Bạn tự quyết định số lượng câu hỏi và kiểu câu hỏi (Trắc nghiệm/Điền từ) dựa trên những gì thấy trong mẫu. 
+    - Tuyệt đối không copy nguyên văn câu hỏi từ mẫu.`;
 
-    userPrompt = `Hãy phân tích tài liệu đính kèm. Tạo một đề thi mới mô phỏng cấu trúc, độ dài, độ khó và phong cách của đề thi mẫu này. ${customPrompt ? `Yêu cầu bổ sung: ${customPrompt}` : ''}`;
+    userPrompt = `Hãy phân tích tài liệu đính kèm và tạo một đề thi mới mô phỏng cấu trúc của nó. ${customPrompt ? `Yêu cầu thêm: ${customPrompt}` : ''}`;
     
-    questionTypeInstruction = `**Định dạng câu hỏi**: Phân tích file mẫu để quyết định định dạng (Trắc nghiệm, Điền từ hoặc hỗn hợp).`;
+    questionTypeInstruction = `**Định dạng**: Phân tích file để quyết định loại câu hỏi phù hợp nhất.`;
 
     responseSchema = {
         type: Type.OBJECT,
         properties: {
           quiz: {
             type: Type.ARRAY,
-            description: `Danh sách các câu hỏi được tạo dựa trên cấu trúc đề mẫu.`,
+            description: `Danh sách các câu hỏi mới được tạo.`,
             items: {
               type: Type.OBJECT,
               properties: {
                 question: { type: Type.STRING, description: "Nội dung câu hỏi." },
                 options: { 
                   type: Type.ARRAY, 
-                  description: "Mảng các lựa chọn. Nếu là câu hỏi điền từ, để trống mảng này.",
+                  description: "Mảng các lựa chọn. Nếu là câu hỏi điền từ, hãy để mảng trống [].",
                   items: { type: Type.STRING } 
                 },
-                answer: { type: Type.STRING, description: "Đáp án đúng." },
+                answer: { type: Type.STRING, description: "Đáp án đúng (Nếu trắc nghiệm phải khớp với một option, nếu điền từ là nội dung từ cần điền)." },
               },
               required: ["question", "options", "answer"],
             },
@@ -108,16 +117,11 @@ export async function generateQuiz({
 
     const isDocx = sampleFile.name.toLowerCase().endsWith('.docx') || sampleFile.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     if (isDocx) {
-        try {
-            const docText = await extractTextFromDocx(sampleFile);
-            promptParts = [
-                { text: `Nội dung văn bản từ file Word:\n\n${docText}` },
-                { text: userPrompt }
-            ];
-        } catch (e) {
-            console.error("Lỗi đọc file DOCX", e);
-            throw new Error("Không thể đọc file Word. Vui lòng chuyển sang PDF hoặc Ảnh.");
-        }
+        const docText = await extractTextFromDocx(sampleFile);
+        promptParts = [
+            { text: `Nội dung văn bản từ file Word:\n\n${docText}` },
+            { text: userPrompt }
+        ];
     } else {
         const filePart = await fileToGenerativePart(sampleFile);
         promptParts = [
@@ -127,43 +131,35 @@ export async function generateQuiz({
     }
 
   } else {
-    // TEXTBOOK MODE: Sử dụng cấu hình từ UI
+    // TEXTBOOK MODE
     const isMultipleChoice = questionType === 'multiple-choice';
     const baseSchemaProperties = {
         question: {
           type: Type.STRING,
-          description: isMultipleChoice 
-            ? "Nội dung câu hỏi." 
-            : "Câu hỏi điền từ, chứa '____' tại vị trí cần điền.",
+          description: isMultipleChoice ? "Nội dung câu hỏi." : "Câu hỏi điền từ với dấu '____'.",
         },
         options: {
           type: Type.ARRAY,
-          description: isMultipleChoice 
-            ? `Mảng gồm đúng ${numOptions} đáp án.` 
-            : "Mảng trống.",
+          description: isMultipleChoice ? `Mảng gồm ${numOptions} đáp án.` : "Mảng trống.",
           items: { type: Type.STRING },
         },
         answer: {
           type: Type.STRING,
-          description: isMultipleChoice 
-            ? "Đáp án đúng, phải khớp chính xác với một trong các options." 
-            : "Từ/cụm từ đúng để điền vào chỗ trống.",
+          description: "Đáp án đúng.",
         },
       };
 
-    if (unit.includes("End term 1")) {
-      contentScopeInstruction = `2.  **Nguồn nội dung**: Ôn tập học kỳ 1 Sách "Global Success Grade ${grade}". Tập trung 70% vào Unit 4, 5, 6 và 30% vào Unit 1, 2, 3.`;
-    } else if (unit.includes("End term 2")) {
-      contentScopeInstruction = `2.  **Nguồn nội dung**: Ôn tập học kỳ 2 Sách "Global Success Grade ${grade}". Tập trung 70% vào Unit 10, 11, 12 và 30% vào Unit 7, 8, 9.`;
+    if (unit.includes("End term")) {
+      contentScopeInstruction = `2.  **Nguồn nội dung**: Ôn tập tổng hợp chương trình Global Success Grade ${grade}.`;
     } else {
-      contentScopeInstruction = `2.  **Nguồn nội dung**: Nội dung phải bám sát Unit: "Global Success Grade ${grade}, ${unit}". Lấy từ các phần Getting started, A closer look, Looking back.`;
+      contentScopeInstruction = `2.  **Nguồn nội dung**: Bám sát Unit: "Global Success Grade ${grade}, ${unit}".`;
     }
 
     questionTypeInstruction = isMultipleChoice 
-      ? `**Định dạng**: Đề thi trắc nghiệm hoàn toàn. Mỗi câu có đúng ${numOptions} lựa chọn.`
-      : `**Định dạng**: Đề thi điền vào chỗ trống. Mỗi câu hỏi chứa '____'.`;
+      ? `**Định dạng**: Trắc nghiệm ${numOptions} lựa chọn.`
+      : `**Định dạng**: Điền vào chỗ trống.`;
 
-    userPrompt = `Tạo đề thi cho "Global Success ${grade} - ${unit}". ${customPrompt ? `Yêu cầu thêm: ${customPrompt}` : ''}`;
+    userPrompt = `Tạo đề thi ${numQuestions} câu cho "Global Success ${grade} - ${unit}". ${customPrompt ? `Yêu cầu thêm: ${customPrompt}` : ''}`;
     promptParts = [{ text: userPrompt }];
 
     responseSchema = {
@@ -171,7 +167,6 @@ export async function generateQuiz({
         properties: {
           quiz: {
             type: Type.ARRAY,
-            description: `Mảng gồm ${numQuestions} câu hỏi.`,
             items: {
               type: Type.OBJECT,
               properties: baseSchemaProperties,
@@ -183,37 +178,50 @@ export async function generateQuiz({
     };
   }
 
-  const systemInstruction = `Bạn là một giáo viên tiếng Anh chuyên gia, chuyên soạn đề cho học sinh trung học (lớp 6-9).
-Nhiệm vụ của bạn là tạo đề thi dựa trên yêu cầu người dùng.
-
-YÊU CẦU BẮT BUỘC:
-1.  **Ngôn ngữ**: Toàn bộ câu hỏi, đáp án phải bằng tiếng Anh.
+  const systemInstruction = `Bạn là chuyên gia soạn đề Tiếng Anh lớp 6-9.
+YÊU CẦU:
+1. Ngôn ngữ: Toàn bộ câu hỏi/đáp án bằng tiếng Anh.
 ${contentScopeInstruction}
-4.  **Độ khó**: Phải phù hợp với khối lớp hoặc tệp mẫu đính kèm.
+3. Trình độ: Phù hợp khối lớp hoặc mẫu đính kèm.
 ${questionTypeInstruction}
-6.  **Ngữ cảnh**: Các câu hỏi phải có ngữ cảnh rõ ràng, gần gũi với lứa tuổi.
-7.  **Định dạng đầu ra**: Phải trả về JSON hợp lệ theo schema đã cung cấp. Đối với trắc nghiệm, các lựa chọn nên bắt đầu bằng "A. ", "B. ", "C. ", "D. ".
+4. Định dạng: Trả về JSON theo đúng schema. Đối với trắc nghiệm, các options phải bắt đầu bằng "A. ", "B. ", "C. ", "D. ".
 `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: {
-        role: 'user',
-        parts: promptParts
-    },
-    config: {
-      systemInstruction: systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: responseSchema,
-      temperature: 0.7,
-    },
-  });
-
-  const jsonText = response.text.trim();
   try {
-    return JSON.parse(jsonText) as QuizData;
-  } catch (e) {
-    console.error("Lỗi parse JSON:", jsonText);
-    throw new Error("Hệ thống AI phản hồi không đúng định dạng. Vui lòng thử lại.");
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+          parts: promptParts
+      },
+      config: {
+        systemInstruction: systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: responseSchema,
+        temperature: 0.7,
+      },
+    });
+
+    const jsonText = response.text || "";
+    const cleanJsonText = jsonText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    
+    if (!cleanJsonText) {
+       throw new Error("AI không trả về dữ liệu. Có thể do nội dung tệp tin không hợp lệ hoặc bị chặn bởi bộ lọc an toàn.");
+    }
+
+    return JSON.parse(cleanJsonText) as QuizData;
+  } catch (error: any) {
+    console.error("Gemini API Error:", error);
+    
+    if (error.message?.includes("API_KEY_INVALID") || error.message?.includes("API key not valid")) {
+       throw new Error("API Key không hợp lệ. Vui lòng kiểm tra lại mã khóa trên Google AI Studio.");
+    }
+    if (error.message?.includes("safety") || error.message?.includes("blocked")) {
+       throw new Error("Yêu cầu bị từ chối bởi bộ lọc an toàn. Vui lòng thử nội dung khác hoặc ảnh rõ ràng hơn.");
+    }
+    if (error.message?.includes("rate limit") || error.message?.includes("429")) {
+       throw new Error("Hệ thống đang quá tải (Rate limit). Vui lòng đợi vài giây rồi thử lại.");
+    }
+
+    throw new Error(error.message || "Lỗi không xác định khi gọi Gemini API.");
   }
 }
