@@ -64,11 +64,10 @@ export async function generateQuiz({
   questionType,
   sampleFile,
 }: GenerateQuizParams): Promise<QuizData> {
-  // Always get the latest API key from process.env
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") {
-    throw new Error("API Key chưa được thiết lập. Vui lòng nhấn nút 'Cấu hình API Key' để bắt đầu.");
+    throw new Error("Ứng dụng chưa được cấu hình API Key. Vui lòng thiết lập biến môi trường API_KEY.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -178,28 +177,16 @@ ${questionTypeInstruction}
     const cleanJsonText = jsonText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
     
     if (!cleanJsonText) {
-       throw new Error("AI không trả về dữ liệu. Có thể do tệp tin không hợp lệ hoặc bị chặn bởi bộ lọc an toàn.");
+       throw new Error("AI không trả về dữ liệu.");
     }
 
     return JSON.parse(cleanJsonText) as QuizData;
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    
     const errorMsg = error.message || "";
-    
-    if (errorMsg.includes("Requested entity was not found") || errorMsg.includes("404")) {
-       throw new Error("API Key hiện tại không tồn tại hoặc đã bị xóa. Vui lòng cấu hình lại API Key mới.");
+    if (errorMsg.includes("404") || errorMsg.includes("not found")) {
+       throw new Error("API Key không hợp lệ hoặc đã hết hạn.");
     }
-    if (errorMsg.includes("API_KEY_INVALID") || errorMsg.includes("not valid")) {
-       throw new Error("API Key không hợp lệ. Vui lòng kiểm tra lại mã khóa trên Google AI Studio.");
-    }
-    if (errorMsg.includes("safety") || errorMsg.includes("blocked")) {
-       throw new Error("Yêu cầu bị từ chối bởi bộ lọc an toàn. Vui lòng thử nội dung khác hoặc ảnh rõ ràng hơn.");
-    }
-    if (errorMsg.includes("429")) {
-       throw new Error("Tốc độ yêu cầu quá nhanh. Vui lòng đợi vài giây rồi thử lại.");
-    }
-
-    throw new Error(errorMsg || "Lỗi kết nối với trí tuệ nhân tạo.");
+    throw new Error(errorMsg || "Lỗi kết nối với AI.");
   }
 }
